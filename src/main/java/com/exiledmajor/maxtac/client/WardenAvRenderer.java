@@ -13,7 +13,6 @@ import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
 import net.minecraft.resources.ResourceLocation;
-import org.joml.Matrix3f;
 import org.joml.Matrix4f;
 
 import java.io.InputStreamReader;
@@ -53,7 +52,6 @@ public final class WardenAvRenderer extends EntityRenderer<WardenAvEntity> {
 
         PoseStack.Pose pose = poseStack.last();
         Matrix4f positionMatrix = pose.pose();
-        Matrix3f normalMatrix = pose.normal();
         VertexConsumer consumer = buffer.getBuffer(RenderType.entityCutout(TEXTURE));
 
         for (JsonElement element : mesh) {
@@ -75,7 +73,7 @@ public final class WardenAvRenderer extends EntityRenderer<WardenAvEntity> {
                         .setUv(u,v)
                         .setOverlay(0)
                         .setLight(packedLight)
-                        .setNormal(normalMatrix,nx,ny,nz);
+                        .setNormal(pose,nx,ny,nz);
             }
         }
         poseStack.popPose();
