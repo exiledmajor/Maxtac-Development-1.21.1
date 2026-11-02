@@ -1,10 +1,7 @@
 package com.exiledmajor.maxtac.client;
 
 import com.exiledmajor.maxtac.entity.WardenAvEntity;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
+import com.google.gson.*;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.Minecraft;
@@ -13,75 +10,70 @@ import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
 import net.minecraft.resources.ResourceLocation;
-import org.joml.Matrix4f;
-
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 
 public final class WardenAvRenderer extends EntityRenderer<WardenAvEntity> {
-    private static final ResourceLocation MESH = ResourceLocation.fromNamespaceAndPath(
-            "maxtac_development", "warden_av_v11.mesh.json");
-    private static final ResourceLocation TEXTURE = ResourceLocation.fromNamespaceAndPath(
-            "maxtac_development", "warden_v11_texture.png");
-    private static JsonArray triangles;
+    private static final ResourceLocation MESH = ResourceLocation.fromNamespaceAndPath("maxtac_development", "warden_av_v11.mesh.json");
+    private static final ResourceLocation TEXTURE = ResourceLocation.fromNamespaceAndPath("maxtac_development", "warden_v11_texture.png");
+    // Immutable packed vertices: XYZ, UV, normal XYZ. Parsed once, not every frame.
+    private static volatile float[] vertices;
 
-    public WardenAvRenderer(EntityRendererProvider.Context context) {
-        super(context);
-    }
+    public WardenAvRenderer(EntityRendererProvider.Context context) { super(context); }
 
-    private static JsonArray getTriangles() {
-        if (triangles != null) return triangles;
-        try (var stream = Minecraft.getInstance().getResourceManager().open(MESH);
-             var reader = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
-            JsonObject root = JsonParser.parseReader(reader).getAsJsonObject();
-            triangles = root.getAsJsonArray("triangles");
-        } catch (Exception exception) {
-            throw new IllegalStateException("Unable to load Warden AV mesh asset", exception);
+    private static float[] mesh() {
+        if (vertices != null) return vertices;
+        synchronized (WardenAvRenderer.class) {
+            if (vertices != null) return vertices;
+            try (var in = Minecraft.getInstance().getResourceManager().open(MESH);
+                 var reader = new InputStreamReader(in, StandardCharsets.UTF_8)) {
+                JsonArray triangles = JsonParser.parseReader(reader).getAsJsonObject().getAsJsonArray("triangles");
+                ArrayList<Float> out = new ArrayList<>(triangles.size() * 24);
+                for (JsonElement item : triangles) {
+                    JsonObject t=item.getAsJsonObject();
+                    JsonArray p=t.getAsJsonArray("positions"), uv=t.getAsJsonArray("uv");
+                    JsonArray n=t.has("normal") ? t.getAsJsonArray("normal") : null;
+                    float nx,ny,nz;
+                    if (n != null) { nx=n.get(0).getAsFloat(); ny=n.get(1).getAsFloat(); nz=n.get(2).getAsFloat(); }
+                    else {
+                        float ax=p.get(3).getAsFloat()-p.get(0).getAsFloat(), ay=p.get(4).getAsFloat()-p.get(1).getAsFloat(), az=p.get(5).getAsFloat()-p.get(2).getAsFloat();
+                        float bx=p.get(6).getAsFloat()-p.get(0).getAsFloat(), by=p.get(7).getAsFloat()-p.get(1).getAsFloat(), bz=p.get(8).getAsFloat()-p.get(2).getAsFloat();
+                        nx=ay*bz-az*by; ny=az*bx-ax*bz; nz=ax*by-ay*bx;
+                        float len=(float)Math.sqrt(nx*nx+ny*ny+nz*nz);
+                        if (len>1.0e-6F) { nx/=len; ny/=len; nz/=len; }
+                    }
+                    for(int i=0;i<3;i++) {
+                        out.add(p.get(i*3).getAsFloat()); out.add(p.get(i*3+1).getAsFloat()); out.add(p.get(i*3+2).getAsFloat());
+                        out.add(uv.get(i*2).getAsFloat()/512.0F); out.add(uv.get(i*2+1).getAsFloat()/512.0F);
+                        out.add(nx); out.add(ny); out.add(nz);
+                    }
+                }
+                float[] packed=new float[out.size()];
+                for(int i=0;i<packed.length;i++) packed[i]=out.get(i);
+                vertices=packed;
+                return packed;
+            } catch(Exception e) { throw new IllegalStateException("Unable to load Warden AV mesh",e); }
         }
-        return triangles;
     }
 
     @Override
-    public void render(WardenAvEntity entity, float entityYaw, float partialTick,
-                       PoseStack poseStack, MultiBufferSource buffer, int packedLight) {
-        JsonArray mesh = getTriangles();
-        poseStack.pushPose();
-        poseStack.translate(0.0D, -1.175D, 0.0D);
-        poseStack.mulPose(com.mojang.math.Axis.YP.rotationDegrees(180.0F - entityYaw));
-        poseStack.scale(0.0625F, 0.0625F, 0.0625F);
-
-        PoseStack.Pose pose = poseStack.last();
-        Matrix4f positionMatrix = pose.pose();
-        VertexConsumer consumer = buffer.getBuffer(RenderType.entityCutout(TEXTURE));
-
-        for (JsonElement element : mesh) {
-            JsonObject triangle = element.getAsJsonObject();
-            JsonArray p = triangle.getAsJsonArray("positions");
-            JsonArray uv = triangle.getAsJsonArray("uv");
-            float x0=p.get(0).getAsFloat(), y0=p.get(1).getAsFloat(), z0=p.get(2).getAsFloat();
-            float x1=p.get(3).getAsFloat(), y1=p.get(4).getAsFloat(), z1=p.get(5).getAsFloat();
-            float x2=p.get(6).getAsFloat(), y2=p.get(7).getAsFloat(), z2=p.get(8).getAsFloat();
-            float ax=x1-x0, ay=y1-y0, az=z1-z0, bx=x2-x0, by=y2-y0, bz=z2-z0;
-            float nx=ay*bz-az*by, ny=az*bx-ax*bz, nz=ax*by-ay*bx;
-            float length=(float)Math.sqrt(nx*nx+ny*ny+nz*nz);
-            if (length > 0.00001F) { nx/=length; ny/=length; nz/=length; }
-            for (int i=0;i<3;i++) {
-                float x=p.get(i*3).getAsFloat(), y=p.get(i*3+1).getAsFloat(), z=p.get(i*3+2).getAsFloat();
-                float u=uv.get(i*2).getAsFloat()/512.0F, v=uv.get(i*2+1).getAsFloat()/512.0F;
-                consumer.addVertex(positionMatrix, x, y, z)
-                        .setColor(255,255,255,255)
-                        .setUv(u,v)
-                        .setOverlay(0)
-                        .setLight(packedLight)
-                        .setNormal(pose,nx,ny,nz);
-            }
+    public void render(WardenAvEntity entity, float yaw, float partialTick, PoseStack stack, MultiBufferSource buffers, int light) {
+        float[] data=mesh();
+        stack.pushPose();
+        stack.translate(0.0D,-1.175D,0.0D);
+        stack.mulPose(com.mojang.math.Axis.YP.rotationDegrees(180.0F-yaw));
+        stack.scale(0.0625F,0.0625F,0.0625F);
+        PoseStack.Pose pose=stack.last();
+        VertexConsumer consumer=buffers.getBuffer(RenderType.entityCutoutNoCull(TEXTURE));
+        for(int i=0;i<data.length;i+=8) {
+            consumer.addVertex(pose,data[i],data[i+1],data[i+2])
+                .setColor(255,255,255,255).setUv(data[i+3],data[i+4])
+                .setOverlay(0).setLight(light).setNormal(pose,data[i+5],data[i+6],data[i+7]);
         }
-        poseStack.popPose();
-        super.render(entity, entityYaw, partialTick, poseStack, buffer, packedLight);
+        stack.popPose();
+        super.render(entity,yaw,partialTick,stack,buffers,light);
     }
 
-    @Override
-    public ResourceLocation getTextureLocation(WardenAvEntity entity) {
-        return TEXTURE;
-    }
+    @Override public ResourceLocation getTextureLocation(WardenAvEntity entity) { return TEXTURE; }
 }
