@@ -26,7 +26,7 @@ jobs:
           python-version: '3.x'
       - name: Fetch Warden AV source assets
         run: |
-          mkdir -p build/model
+          mkdir -p build/model src/main/resources/assets/maxtac_development
           curl -fL "https://raw.githubusercontent.com/exiledmajor/Reference-2/main/The%20Modpack/Modelling%201/warden_av_v11_pack/warden_av_v11.bbmodel" -o build/model/warden_av_v11.bbmodel
           curl -fL "https://raw.githubusercontent.com/exiledmajor/Reference-2/main/The%20Modpack/Modelling%201/warden_av_v11_pack/warden_v11_texture.png" -o build/model/warden_v11_texture.png
           python tools/convert_bbmodel.py build/model/warden_av_v11.bbmodel -o src/main/resources/assets/maxtac_development/warden_av_v11.mesh.json
