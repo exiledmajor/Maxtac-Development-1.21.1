@@ -92,11 +92,55 @@ def add_face(points, uvs, material, triangles):
                           "normal": [nx, ny, nz], "material": material})
 
 
-def convert_mesh(element, triangles):
+def rotate_point(point, transform):
+    import math
+    origin = transform.get("origin") or [0.0, 0.0, 0.0]
+    rotation = transform.get("rotation") or [0.0, 0.0, 0.0]
+    x, y, z = (float(point[i]) - float(origin[i]) for i in range(3))
+    rx, ry, rz = (float(rotation[i]) * math.pi / 180.0 for i in range(3))
+    if rx:
+        c, sn = math.cos(rx), math.sin(rx); y, z = y*c-z*sn, y*sn+z*c
+    if ry:
+        c, sn = math.cos(ry), math.sin(ry); x, z = x*c+z*sn, -x*sn+z*c
+    if rz:
+        c, sn = math.cos(rz), math.sin(rz); x, y = x*c-y*sn, x*sn+y*c
+    return [x + float(origin[0]), y + float(origin[1]), z + float(origin[2])]
+
+def transformed(point, transforms):
+    result = [float(v) for v in point]
+    for transform in transforms: result = rotate_point(result, transform)
+    return result
+
+def element_transform(element):
+    rotation = element.get("rotation") or [0.0, 0.0, 0.0]
+    if len(rotation) == 3 and any(abs(float(v)) > 1e-8 for v in rotation):
+        return [{"origin": element.get("origin") or [0, 0, 0], "rotation": rotation}]
+    return []
+
+def hierarchy_transforms(model):
+    by_uuid = {e.get("uuid"): e for e in model.get("elements", []) if e.get("uuid")}
+    result = {}
+    def walk(nodes, inherited):
+        for node in nodes or []:
+            if isinstance(node, str):
+                if node in by_uuid: result[node] = list(inherited) + element_transform(by_uuid[node])
+            elif isinstance(node, dict):
+                rotation = node.get("rotation") or [0.0, 0.0, 0.0]
+                group = []
+                if len(rotation) == 3 and any(abs(float(v)) > 1e-8 for v in rotation):
+                    group = [{"origin": node.get("origin") or [0, 0, 0], "rotation": rotation}]
+                walk(node.get("children", []), list(inherited) + group)
+    walk(model.get("outliner", []), [])
+    for element in model.get("elements", []):
+        uid = element.get("uuid")
+        if uid and uid not in result: result[uid] = element_transform(element)
+    return result
+
+def convert_mesh(element, triangles, transforms=()):
     vertices = element.get("vertices", {})
     for face in element.get("faces", {}).values():
         ids = face.get("vertices", [])
-        points = [vertices.get(str(i)) for i in ids]
+        points = [transformed(vertices.get(str(i)), transforms) if vertices.get(str(i)) is not None else None for i in ids]
         if len(points) < 3 or any(p is None for p in points):
             continue
         uvmap = face.get("uv", {})
@@ -104,7 +148,7 @@ def convert_mesh(element, triangles):
         add_face(points, uvs, face.get("texture"), triangles)
 
 
-def convert_cube(element, triangles):
+def convert_cube(element, triangles, transforms=()):
     x0,y0,z0 = map(float, element.get("from", [0,0,0]))
     x1,y1,z1 = map(float, element.get("to", [0,0,0]))
     faces = {
@@ -116,6 +160,7 @@ def convert_cube(element, triangles):
       "down":  ([(x0,y0,z1),(x1,y0,z1),(x1,y0,z0),(x0,y0,z0)]),
     }
     for name, points in faces.items():
+        points = [transformed(point, transforms) for point in points]
         face = element.get("faces", {}).get(name)
         if not face or face.get("texture") is None:
             continue
@@ -132,11 +177,13 @@ def main():
     model = json.loads(args.input.read_text(encoding="utf-8"))
     triangles = []
     elements = model.get("elements", [])
+    transforms = hierarchy_transforms(model)
     for element in elements:
+        element_transforms = transforms.get(element.get("uuid"), element_transform(element))
         if element.get("type") == "mesh" or "vertices" in element:
-            convert_mesh(element, triangles)
+            convert_mesh(element, triangles, element_transforms)
         elif element.get("type") == "cube" or ("from" in element and "to" in element):
-            convert_cube(element, triangles)
+            convert_cube(element, triangles, element_transforms)
     if not triangles:
         raise SystemExit("No supported mesh/cube faces found")
     out = {"format":"maxtac-triangles-v2", "source":args.input.name,
